@@ -30,34 +30,75 @@
       } from "./js/utils/utils_three.js";
       import * as THREE from "three";
 
-      let engine = ThreeEngine.new_default_3d(0, 0, 12);
+      let engine = ThreeEngine.new_default_3d(0, 0, 20);
       let gui = get_default_lil_gui();
 
-      const params = { x: 0, y: 0, speed: 1.5, swayAmp: 0.18, swayFreq: 3.0 };
-      let target = null;
+      const waypoints = [];
+      let splineT = 0;
+      let spline = null;
+      let splineLength = 0;
 
-      gui.add(params, "x", -10, 10).name("Target X");
-      gui.add(params, "y", -10, 10).name("Target Y");
+      const params = { x: 0, y: 0, speed: 1.5, swayAmp: 0.18, swayFreq: 3.0 };
+      let waypointFolder = gui.addFolder("Waypoint Controls");
+      let swayFolder = gui.addFolder("Sway Controls");
+
+      waypointFolder.add(params, "x", -10, 10).name("Target X");
+      waypointFolder.add(params, "y", -10, 10).name("Target Y");
+      waypointFolder
+        .add(
+          {
+            add: () => {
+              waypoints.push(new THREE.Vector3(params.x, params.y, 0));
+            },
+          },
+          "add",
+        )
+        .name("Add Waypoint");
+      waypointFolder
+        .add(
+          {
+            clear: () => {
+              waypoints.length = 0;
+              spline = null;
+              moving = false;
+              splineT = 0;
+            },
+          },
+          "clear",
+        )
+        .name("Clear Waypoints");
+
+      let moving = false;
+
       gui
         .add(
           {
             go: () => {
-              target = new THREE.Vector3(params.x, params.y, 0);
+              if (waypoints.length < 1) return;
+              const all_waypoints = [
+                new THREE.Vector3(joints[0].x, joints[0].y, 0),
+                ...waypoints,
+              ];
+
+              spline = new THREE.CatmullRomCurve3(all_waypoints);
+              spline.arcLengthDivisions = 200;
+              splineT = 0;
+              moving = true;
+              splineLength = spline.getLength();
             },
           },
           "go",
         )
-        .name("Go Here");
+        .name("Go!");
 
-      gui.add(params, "speed", 0.5, 5.0).name("Speed");
-      gui.add(params, "swayAmp", 0, 0.5).name("Sway Amount");
-      gui.add(params, "swayFreq", 1, 8).name("Sway Speed");
+      swayFolder.add(params, "speed", 0.5, 5.0).name("Speed");
+      swayFolder.add(params, "swayAmp", 0, 0.5).name("Sway Amount");
+      swayFolder.add(params, "swayFreq", 1, 8).name("Sway Speed");
 
       const SEGMENTS = 20;
       const LENGTH = 0.25;
       const clock = new THREE.Clock();
 
-      // Initialize joint positions in a straight line
       const joints = [];
       for (let i = 0; i < SEGMENTS; i++) {
         joints.push(new THREE.Vector3(0, -i * LENGTH, 0));
@@ -69,15 +110,47 @@
         radii.push(radius);
       }
 
+      const headColor = new THREE.Color(0x2ecc40);
+      const tailColor = new THREE.Color(0x1a5e20);
+
+      const colors = [];
+      for (let i = 0; i < SEGMENTS; i++) {
+        const color = new THREE.Color().lerpColors(
+          headColor,
+          tailColor,
+          i / (SEGMENTS - 1),
+        );
+        colors.push(color);
+      }
+
       engine.animation_loop(() => {
         const delta = clock.getDelta();
-
         const t = clock.getElapsedTime();
 
-        if (target) {
-          const distToTarget = joints[0].distanceTo(target);
-          if (distToTarget > 0.05) {
-            joints[0].lerp(target, params.speed * delta);
+        if (spline && moving) {
+          splineT += (params.speed * delta) / splineLength;
+          splineT = Math.min(splineT, 1);
+
+          const targetOnSpline = spline.getPointAt(splineT);
+          joints[0].lerp(targetOnSpline, 0.3);
+
+          const points = spline.getPoints(50);
+          for (let i = 0; i < points.length - 1; i++) {
+            const a = points[i];
+            const b = points[i + 1];
+            engine.draw_debug_line(
+              [a.x, a.y, a.z],
+              [b.x, b.y, b.z],
+              false,
+              0.01,
+              0xffff00,
+            );
+          }
+
+          if (splineT >= 1) {
+            moving = false;
+            waypoints.length = 0;
+            spline = null;
           }
         }
 
@@ -91,32 +164,26 @@
         const headDir = new THREE.Vector3()
           .subVectors(joints[0], joints[1])
           .normalize();
-        // Perpendicular in the xy plane (z-up)
+
         const perp = new THREE.Vector3(-headDir.y, headDir.x, 0);
 
         joints.forEach((p, i) => {
-          // Phase shifts the wave along the body
           const sway = params.swayAmp * Math.sin(t * params.swayFreq + i * 0.6);
           const swayedPos = p.clone().addScaledVector(perp, sway);
 
           engine.draw_debug_sphere(
             [swayedPos.x, swayedPos.y, swayedPos.z],
             radii[i],
-            0x4caf50,
+            colors[i].getHex(),
             1.0,
           );
-
-          engine.draw_debug_sphere([params.x, params.y, 0], 0.12, 0x3045e, 1.0);
-
-          if (target) {
-            engine.draw_debug_sphere(
-              [target.x, target.y, target.z],
-              0.12,
-              0xff0000,
-              1.0,
-            );
-          }
         });
+
+        waypoints.forEach((wp, i) => {
+          engine.draw_debug_sphere([wp.x, wp.y, wp.z], 0.12, 0xff0000, 1.0);
+        });
+
+        engine.draw_debug_sphere([params.x, params.y, 0], 0.12, 0x000000, 1.0);
       });
     </script>
   </body>
