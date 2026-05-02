@@ -1,33 +1,123 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
+  <head>
     <title>CPSC 487/587</title>
     <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
-    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script
+      id="MathJax-script"
+      async
+      src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"
+    ></script>
     <script src="https://cdn.jsdelivr.net/npm/lil-gui@0.19.1/dist/lil-gui.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/10.3.0/math.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/quaternion@1.5.1/quaternion.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/numeric@1.2.6/numeric-1.2.6.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/stats.js@0.17.0/build/stats.min.js"></script>
     <script type="importmap">
-        {
-            "imports": {
-              "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-              "three/": "https://unpkg.com/three@0.160.0/"
-            }
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+          "three/": "https://unpkg.com/three@0.160.0/"
         }
+      }
     </script>
-</head>
-<body>
-<script type="module">
-    import {ThreeEngine} from "./js/utils/utils_three.js";
+  </head>
+  <body>
+    <script type="module">
+      import {
+        ThreeEngine,
+        get_default_lil_gui,
+      } from "./js/utils/utils_three.js";
+      import * as THREE from "three";
 
-    let engine = ThreeEngine.new_default_3d();
+      let engine = ThreeEngine.new_default_3d(0, 0, 12);
+      let gui = get_default_lil_gui();
 
-    engine.animation_loop( ()  => {
+      const params = { x: 0, y: 0, speed: 1.5, swayAmp: 0.18, swayFreq: 3.0 };
+      let target = null;
 
-    });
+      gui.add(params, "x", -10, 10).name("Target X");
+      gui.add(params, "y", -10, 10).name("Target Y");
+      gui
+        .add(
+          {
+            go: () => {
+              target = new THREE.Vector3(params.x, params.y, 0);
+            },
+          },
+          "go",
+        )
+        .name("Go Here");
 
-</script>
-</body>
+      gui.add(params, "speed", 0.5, 5.0).name("Speed");
+      gui.add(params, "swayAmp", 0, 0.5).name("Sway Amount");
+      gui.add(params, "swayFreq", 1, 8).name("Sway Speed");
+
+      const SEGMENTS = 20;
+      const LENGTH = 0.25;
+      const clock = new THREE.Clock();
+
+      // Initialize joint positions in a straight line
+      const joints = [];
+      for (let i = 0; i < SEGMENTS; i++) {
+        joints.push(new THREE.Vector3(0, -i * LENGTH, 0));
+      }
+
+      const radii = [];
+      for (let i = 0; i < SEGMENTS; i++) {
+        const radius = THREE.MathUtils.lerp(0.32, 0.16, i / (SEGMENTS - 1));
+        radii.push(radius);
+      }
+
+      engine.animation_loop(() => {
+        const delta = clock.getDelta();
+
+        const t = clock.getElapsedTime();
+
+        if (target) {
+          const distToTarget = joints[0].distanceTo(target);
+          if (distToTarget > 0.05) {
+            joints[0].lerp(target, params.speed * delta);
+          }
+        }
+
+        for (let i = 1; i < SEGMENTS; i++) {
+          const dir = new THREE.Vector3()
+            .subVectors(joints[i], joints[i - 1])
+            .normalize();
+          joints[i].copy(joints[i - 1]).addScaledVector(dir, LENGTH);
+        }
+
+        const headDir = new THREE.Vector3()
+          .subVectors(joints[0], joints[1])
+          .normalize();
+        // Perpendicular in the xy plane (z-up)
+        const perp = new THREE.Vector3(-headDir.y, headDir.x, 0);
+
+        joints.forEach((p, i) => {
+          // Phase shifts the wave along the body
+          const sway = params.swayAmp * Math.sin(t * params.swayFreq + i * 0.6);
+          const swayedPos = p.clone().addScaledVector(perp, sway);
+
+          engine.draw_debug_sphere(
+            [swayedPos.x, swayedPos.y, swayedPos.z],
+            radii[i],
+            0x4caf50,
+            1.0,
+          );
+
+          engine.draw_debug_sphere([params.x, params.y, 0], 0.12, 0x3045e, 1.0);
+
+          if (target) {
+            engine.draw_debug_sphere(
+              [target.x, target.y, target.z],
+              0.12,
+              0xff0000,
+              1.0,
+            );
+          }
+        });
+      });
+    </script>
+  </body>
 </html>
