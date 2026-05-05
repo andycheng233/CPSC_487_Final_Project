@@ -286,10 +286,9 @@
               i / (SEGMENTS - 1),
             );
           } else {
-            // Hue shifts along the body + shifts over time when moving
-            const bodyFraction = i / (SEGMENTS - 1); // 0 at head, 1 at tail
-            const timeShift = t * 0.2; // rainbow flows when moving
-            const hue = (bodyFraction + timeShift) % 1.0; // wrap around 0-1
+            const bodyFraction = i / (SEGMENTS - 1);
+            const timeShift = t * 0.2;
+            const hue = (bodyFraction + timeShift) % 1.0;
 
             color = new THREE.Color().setHSL(hue, 1.0, 0.5);
           }
