@@ -80,7 +80,9 @@
                 ...waypoints,
               ];
 
-              spline = new THREE.CatmullRomCurve3(all_waypoints);
+              const new_path = buildPath(all_waypoints, obstacles);
+
+              spline = new THREE.CatmullRomCurve3(new_path);
               spline.arcLengthDivisions = 200;
               splineT = 0;
               moving = true;
@@ -94,6 +96,110 @@
       swayFolder.add(params, "speed", 0.5, 5.0).name("Speed");
       swayFolder.add(params, "swayAmp", 0, 0.5).name("Sway Amount");
       swayFolder.add(params, "swayFreq", 1, 8).name("Sway Speed");
+
+      const obstacles = [
+        { center: new THREE.Vector3(2, 3, 0), radius: 1.5 },
+        { center: new THREE.Vector3(-3, 1, 0), radius: 1 },
+        { center: new THREE.Vector3(4, -2, 0), radius: 2 },
+      ];
+
+      const obsParams = { x: 0, y: 0, radius: 0.8 };
+      let obstacleFolder = gui.addFolder("Obstacles");
+      obstacleFolder.add(obsParams, "x", -10, 10).name("X");
+      obstacleFolder.add(obsParams, "y", -10, 10).name("Y");
+      obstacleFolder.add(obsParams, "radius", 0.2, 2.0).name("Radius");
+      obstacleFolder
+        .add(
+          {
+            place: () => {
+              obstacles.push({
+                center: new THREE.Vector3(obsParams.x, obsParams.y, 0),
+                radius: obsParams.radius,
+              });
+            },
+          },
+          "place",
+        )
+        .name("Place Obstacle");
+      obstacleFolder
+        .add(
+          {
+            clearObs: () => {
+              obstacles.length = 0;
+            },
+          },
+          "clearObs",
+        )
+        .name("Clear Obstacles");
+
+      const PADDING = 1.5;
+
+      function getDetourPoints(
+        waypoint1,
+        waypoint2,
+        obstacles,
+        maxIterations = 25,
+      ) {
+        const detours = [];
+
+        obstacles.forEach((obs) => {
+          const AB = new THREE.Vector3().subVectors(waypoint2, waypoint1);
+          const AC = new THREE.Vector3().subVectors(obs.center, waypoint1);
+          const t = Math.max(0, Math.min(1, AC.dot(AB) / AB.dot(AB)));
+          const closest = waypoint1.clone().addScaledVector(AB, t);
+
+          if (closest.distanceTo(obs.center) < obs.radius + PADDING) {
+            const away = new THREE.Vector3().subVectors(closest, obs.center);
+            if (away.length() < 0.0001) away.set(1, 0, 0);
+            away.normalize().multiplyScalar(obs.radius + PADDING);
+
+            let detourPoint = obs.center.clone().add(away);
+
+            for (let iter = 0; iter < maxIterations; iter++) {
+              let clean = true;
+              obstacles.forEach((other) => {
+                if (
+                  detourPoint.distanceTo(other.center) <
+                  other.radius + PADDING
+                ) {
+                  const pushAway = new THREE.Vector3().subVectors(
+                    detourPoint,
+                    other.center,
+                  );
+                  if (pushAway.length() < 0.0001) pushAway.set(1, 0, 0);
+                  pushAway.normalize().multiplyScalar(other.radius + PADDING);
+                  detourPoint = other.center.clone().add(pushAway);
+                  clean = false;
+                }
+              });
+              if (clean) break;
+            }
+
+            detours.push({ t, point: detourPoint });
+          }
+        });
+
+        detours.sort((a, b) => a.t - b.t);
+        return detours.map((d) => d.point);
+      }
+
+      function buildPath(waypoints, obstacles) {
+        const result = [];
+
+        for (let i = 0; i < waypoints.length - 1; i++) {
+          result.push(waypoints[i]);
+          const detours = getDetourPoints(
+            waypoints[i],
+            waypoints[i + 1],
+            obstacles,
+          );
+          detours.forEach((d) => result.push(d));
+        }
+
+        result.push(waypoints[waypoints.length - 1]);
+
+        return result;
+      }
 
       const SEGMENTS = 20;
       const LENGTH = 0.25;
@@ -142,8 +248,8 @@
               [a.x, a.y, a.z],
               [b.x, b.y, b.z],
               false,
-              0.01,
-              0xffff00,
+              0.05,
+              0xffa500,
             );
           }
 
@@ -184,6 +290,21 @@
         });
 
         engine.draw_debug_sphere([params.x, params.y, 0], 0.12, 0x000000, 1.0);
+        engine.draw_debug_sphere(
+          [obsParams.x, obsParams.y, 0],
+          0.12,
+          0x800080,
+          1.0,
+        );
+
+        obstacles.forEach((obs) => {
+          engine.draw_debug_sphere(
+            [obs.center.x, obs.center.y, obs.center.z],
+            obs.radius,
+            0x800080,
+            1.0,
+          );
+        });
       });
     </script>
   </body>
