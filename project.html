@@ -216,14 +216,14 @@
         radii.push(radius);
       }
 
-      const headColor = new THREE.Color(0x2ecc40);
-      const tailColor = new THREE.Color(0x1a5e20);
+      const stillHeadColor = new THREE.Color(0x2ecc40);
+      const stillTailColor = new THREE.Color(0x1a5e20);
 
       const colors = [];
       for (let i = 0; i < SEGMENTS; i++) {
         const color = new THREE.Color().lerpColors(
-          headColor,
-          tailColor,
+          stillHeadColor,
+          stillTailColor,
           i / (SEGMENTS - 1),
         );
         colors.push(color);
@@ -277,10 +277,27 @@
           const sway = params.swayAmp * Math.sin(t * params.swayFreq + i * 0.6);
           const swayedPos = p.clone().addScaledVector(perp, sway);
 
+          let color = null;
+
+          if (!moving) {
+            color = new THREE.Color().lerpColors(
+              stillHeadColor,
+              stillTailColor,
+              i / (SEGMENTS - 1),
+            );
+          } else {
+            // Hue shifts along the body + shifts over time when moving
+            const bodyFraction = i / (SEGMENTS - 1); // 0 at head, 1 at tail
+            const timeShift = t * 0.2; // rainbow flows when moving
+            const hue = (bodyFraction + timeShift) % 1.0; // wrap around 0-1
+
+            color = new THREE.Color().setHSL(hue, 1.0, 0.5);
+          }
+
           engine.draw_debug_sphere(
             [swayedPos.x, swayedPos.y, swayedPos.z],
             radii[i],
-            colors[i].getHex(),
+            color.getHex(),
             1.0,
           );
         });
