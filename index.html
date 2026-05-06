@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <title>CPSC 487/587</title>
+    <title>CPSC 487/587 Final Project</title>
     <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
     <script
       id="MathJax-script"
@@ -38,7 +38,17 @@
       let spline = null;
       let splineLength = 0;
 
-      const params = { x: 0, y: 0, speed: 1.5, swayAmp: 0.18, swayFreq: 3.0 };
+      const params = {
+        x: 0,
+        y: 0,
+        speed: 1.5,
+        swayAmp: 0.18,
+        swayFreq: 3.0,
+        wLength: 1.0,
+        wSmooth: 4.0,
+        wObstacle: 8.0,
+        safeDist: 1.5,
+      };
       let waypointFolder = gui.addFolder("Waypoint Controls");
       let swayFolder = gui.addFolder("Sway Controls");
 
@@ -69,29 +79,6 @@
         .name("Clear Waypoints");
 
       let moving = false;
-
-      gui
-        .add(
-          {
-            go: () => {
-              if (waypoints.length < 1) return;
-              const all_waypoints = [
-                new THREE.Vector3(joints[0].x, joints[0].y, 0),
-                ...waypoints,
-              ];
-
-              const new_path = buildPath(all_waypoints, obstacles);
-
-              spline = new THREE.CatmullRomCurve3(new_path);
-              spline.arcLengthDivisions = 200;
-              splineT = 0;
-              moving = true;
-              splineLength = spline.getLength();
-            },
-          },
-          "go",
-        )
-        .name("Go!");
 
       swayFolder.add(params, "speed", 0.5, 5.0).name("Speed");
       swayFolder.add(params, "swayAmp", 0, 0.5).name("Sway Amount");
@@ -132,73 +119,116 @@
         )
         .name("Clear Obstacles");
 
-      const PADDING = 1.5;
+      let weightFolder = gui.addFolder("Optimizer Weights");
+      weightFolder.add(params, "wLength", 0.0, 5.0).name("Path Length Weight");
+      weightFolder.add(params, "wSmooth", 0.0, 10.0).name("Smoothness Weight");
+      weightFolder.add(params, "wObstacle", 0.0, 20.0).name("Obstacle Weight");
+      weightFolder.add(params, "safeDist", 0.5, 3.0).name("Safety Distance");
 
-      function getDetourPoints(
-        waypoint1,
-        waypoint2,
+      gui
+        .add(
+          {
+            go: () => {
+              if (waypoints.length < 1) return;
+              const all_waypoints = [
+                new THREE.Vector3(joints[0].x, joints[0].y, 0),
+                ...waypoints,
+              ];
+
+              let optimizedPath = [];
+
+              for (let i = 0; i < all_waypoints.length - 1; i++) {
+                const segmentPath = optimizePath(
+                  all_waypoints[i],
+                  all_waypoints[i + 1],
+                  obstacles,
+                  12,
+                  200,
+                );
+
+                if (i > 0) segmentPath.shift();
+
+                optimizedPath.push(...segmentPath);
+              }
+
+              spline = new THREE.CatmullRomCurve3(optimizedPath);
+              spline.arcLengthDivisions = 200;
+              splineT = 0;
+              moving = true;
+              splineLength = spline.getLength();
+            },
+          },
+          "go",
+        )
+        .name("Go!");
+
+      function optimizePath(
+        start,
+        goal,
         obstacles,
-        maxIterations = 25,
+        numPoints = 12,
+        iterations = 200,
       ) {
-        const detours = [];
+        const points = [];
 
-        obstacles.forEach((obs) => {
-          const AB = new THREE.Vector3().subVectors(waypoint2, waypoint1);
-          const AC = new THREE.Vector3().subVectors(obs.center, waypoint1);
-          const t = Math.max(0, Math.min(1, AC.dot(AB) / AB.dot(AB)));
-          const closest = waypoint1.clone().addScaledVector(AB, t);
-
-          if (closest.distanceTo(obs.center) < obs.radius + PADDING) {
-            const away = new THREE.Vector3().subVectors(closest, obs.center);
-            if (away.length() < 0.0001) away.set(1, 0, 0);
-            away.normalize().multiplyScalar(obs.radius + PADDING);
-
-            let detourPoint = obs.center.clone().add(away);
-
-            for (let iter = 0; iter < maxIterations; iter++) {
-              let clean = true;
-              obstacles.forEach((other) => {
-                if (
-                  detourPoint.distanceTo(other.center) <
-                  other.radius + PADDING
-                ) {
-                  const pushAway = new THREE.Vector3().subVectors(
-                    detourPoint,
-                    other.center,
-                  );
-                  if (pushAway.length() < 0.0001) pushAway.set(1, 0, 0);
-                  pushAway.normalize().multiplyScalar(other.radius + PADDING);
-                  detourPoint = other.center.clone().add(pushAway);
-                  clean = false;
-                }
-              });
-              if (clean) break;
-            }
-
-            detours.push({ t, point: detourPoint });
-          }
-        });
-
-        detours.sort((a, b) => a.t - b.t);
-        return detours.map((d) => d.point);
-      }
-
-      function buildPath(waypoints, obstacles) {
-        const result = [];
-
-        for (let i = 0; i < waypoints.length - 1; i++) {
-          result.push(waypoints[i]);
-          const detours = getDetourPoints(
-            waypoints[i],
-            waypoints[i + 1],
-            obstacles,
-          );
-          detours.forEach((d) => result.push(d));
+        for (let i = 0; i < numPoints; i++) {
+          const t = i / (numPoints - 1);
+          points.push(start.clone().lerp(goal, t));
         }
 
-        result.push(waypoints[waypoints.length - 1]);
+        const lr = 0.02;
 
-        return result;
+        for (let iter = 0; iter < iterations; iter++) {
+          const gradients = points.map(() => new THREE.Vector3(0, 0, 0));
+
+          for (let i = 1; i < numPoints - 1; i++) {
+            const prev = points[i - 1];
+            const curr = points[i];
+            const next = points[i + 1];
+
+            const lengthGrad = curr
+              .clone()
+              .multiplyScalar(2)
+              .sub(prev)
+              .sub(next)
+              .multiplyScalar(params.wLength);
+
+            gradients[i].add(lengthGrad);
+
+            const midpoint = prev.clone().add(next).multiplyScalar(0.5);
+            const smoothGrad = curr
+              .clone()
+              .sub(midpoint)
+              .multiplyScalar(params.wSmooth);
+
+            gradients[i].add(smoothGrad);
+
+            obstacles.forEach((obs) => {
+              const diff = curr.clone().sub(obs.center);
+              const dist = diff.length();
+              const minDist = obs.radius + params.safeDist;
+
+              if (dist < minDist) {
+                if (dist < 0.0001) diff.set(1, 0, 0);
+
+                const direction = diff.normalize();
+                const violation = minDist - dist;
+
+                const obstacleGrad = direction.multiplyScalar(
+                  -2 * params.wObstacle * violation,
+                );
+
+                gradients[i].add(obstacleGrad);
+              }
+            });
+          }
+
+          for (let i = 1; i < numPoints - 1; i++) {
+            points[i].sub(gradients[i].multiplyScalar(lr));
+          }
+        }
+
+        return points;
       }
 
       const SEGMENTS = 20;
